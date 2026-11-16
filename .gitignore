@@ -16,3 +16,6 @@ cache/*.tmp
 node_modules/
 .DS_Store
 Thumbs.db
+
+# Agent-readable library export (local; contains your full library)
+library-export/

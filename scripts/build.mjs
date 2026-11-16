@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, exportDir, streams, account, tech } from './lib/export.mjs';
-import { norm } from './lib/match.mjs';
+import { FAMILIES, family, LANGS, scriptLang, genreLang, playlistLang, titleWordsLang, SLEEP_RX } from './lib/classify.mjs';
 
 const dir = exportDir();
 const OUT = path.join(ROOT, 'site', 'data');
@@ -60,56 +60,6 @@ function platformName(p = '') {
   return p || 'Unknown';
 }
 
-// Genre -> one of eight families (fixed order = fixed colour slot in the UI).
-export const FAMILIES = ['Hip-Hop & R&B', 'Indian', 'Rock & Alt', 'Pop', 'K-Pop, J-Pop & Anime', 'Electronic', 'Chill & Ambient', 'Other'];
-function family(g) {
-  if (!g) return null;
-  const s = g.toLowerCase();
-  if (/sleep|ambient|new age|relax|meditation|lo-?fi|nature|easy listening|instrumental|classical|piano|healing|spa/.test(s)) return 'Chill & Ambient';
-  if (/hip.?hop|rap|r&b|soul|trap|grime|drill|funk/.test(s)) return 'Hip-Hop & R&B';
-  if (/bollywood|punjabi|bengali|indian|hindi|tamil|telugu|malayalam|kannada|marathi|gujarati|urdu|ghazal|sufi|qawwali|devotional|bhojpuri|regional|desi|carnatic|hindustani|pakistan/.test(s)) return 'Indian';
-  if (/k-pop|j-pop|anime|japan|korea|j-rock|mandopop|cantopop|c-pop|thai|vocaloid|enka/.test(s)) return 'K-Pop, J-Pop & Anime';
-  if (/rock|alternative|metal|punk|grunge|indie|emo|hardcore|alt/.test(s)) return 'Rock & Alt';
-  if (/electronic|dance|house|techno|edm|trance|dubstep|drum|electro|garage/.test(s)) return 'Electronic';
-  if (/pop|singer|songwriter|adult contemporary|vocal/.test(s)) return 'Pop';
-  return 'Other';
-}
-
-// Language: best guess per artist from script, genre and the user's own language-named playlists.
-const LANGS = ['English & global', 'Hindi & Urdu', 'Punjabi', 'Bengali', 'Japanese', 'Korean', 'Thai', 'Other'];
-function scriptLang(s = '') {
-  if (/[가-힯ᄀ-ᇿ]/.test(s)) return 'Korean';
-  if (/[぀-ヿ]/.test(s)) return 'Japanese';
-  if (/[฀-๿]/.test(s)) return 'Thai';
-  if (/[ঀ-৿]/.test(s)) return 'Bengali';
-  if (/[਀-੿]/.test(s)) return 'Punjabi';
-  if (/[ऀ-ॿ؀-ۿ]/.test(s)) return 'Hindi & Urdu';
-  if (/[一-鿿]/.test(s)) return 'Japanese'; // kanji-only titles here are mostly Japanese
-  return null;
-}
-function genreLang(g = '') {
-  const s = g.toLowerCase();
-  if (s.includes('punjabi')) return 'Punjabi';
-  if (s.includes('bengali')) return 'Bengali';
-  if (/k-pop|korean/.test(s)) return 'Korean';
-  if (/j-pop|anime|japan|j-rock|enka/.test(s)) return 'Japanese';
-  if (s.includes('thai')) return 'Thai';
-  if (/bollywood|hindi|indian pop|ghazal|sufi|qawwali|urdu|devotional|indian|bhojpuri/.test(s)) return 'Hindi & Urdu';
-  if (/tamil|telugu|malayalam|kannada|marathi|gujarati/.test(s)) return 'Other';
-  if (/hip.?hop|rap|rock|alternative|metal|punk|r&b|soul|electronic|dance|country|jazz|blues|singer|new age|ambient|classical/.test(s)) return 'English & global';
-  return null;
-}
-function playlistLang(name = '') {
-  const s = name.toLowerCase();
-  if (/bengali|bangla/.test(s)) return 'Bengali';
-  if (/punjabi/.test(s)) return 'Punjabi';
-  if (/kpop|k-pop|korean/.test(s)) return 'Korean';
-  if (/\bjap|japan|anime|jpop/.test(s)) return 'Japanese';
-  if (/thai/.test(s)) return 'Thai';
-  if (/hindi|urdu|bollywood/.test(s)) return 'Hindi & Urdu';
-  return null;
-}
-const SLEEP_RX = /sleep|white noise|brown noise|pink noise|rain sounds|relaxing|relaxation|meditat|ambient|lullab|delta waves|theta|binaural|asmr|soothing|nature sounds|spa music|healing|calm/i;
 
 // ---------------------------------------------------------------- load
 const rows = streams(dir);
@@ -160,6 +110,8 @@ tracks.list.forEach((t, i) => {
   info.total += w;
   const sl = scriptLang(t.name) || scriptLang(artists.list[t.a]);
   if (sl) info.lang[sl] = (info.lang[sl] || 0) + w * 3;
+  const tw = titleWordsLang(t.name);
+  if (tw && tw.confidence === 'medium') info.lang[tw.lang] = (info.lang[tw.lang] || 0) + w * 2;
   if (t.it?.g) {
     info.genre[t.it.g] = (info.genre[t.it.g] || 0) + w;
     const gl = genreLang(t.it.g);
