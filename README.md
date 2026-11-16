@@ -45,26 +45,20 @@ Node 20+ is required. There are no npm dependencies; d3 is loaded from jsDelivr.
 - **Published:** the full play log, as listening time plus track. This includes private-session plays; to leave those out, run `node scripts/build.mjs --exclude-incognito`.
 - **Local only:** `private.json`, which holds ad inferences and search history.
 
-## Own the music: `scripts/acquire.mjs`
+## Get the music: `scripts/acquire.mjs`
 
-Builds a list of every song worth owning, in this priority order:
+Builds a list of every song, in this priority order:
 
 1. **Playlists first**, with the most-played playlist on top.
 2. **Liked songs.**
 3. **Most-played songs.**
 
-For each song it shows the iTunes price (in INR) and links to the store, a Bandcamp search, and Spotify.
+For each song it shows free links to JioSaavn and YouTube Music (free with ads, offline in the app), a Bandcamp search (many free or name-your-price downloads), and the iTunes price in INR if you want a file to keep.
 
 ```bash
 node scripts/acquire.mjs                                # acquire/shopping-list.html + .csv
-node scripts/acquire.mjs --music "D:\Music"             # tick off what you already own + playlists as .m3u8
-node scripts/acquire.mjs --music "D:\Music" --to-mp3    # convert owned m4a/flac to 320 kbps MP3 (needs ffmpeg)
+node scripts/acquire.mjs --music "D:\Music"             # tick off songs already in your folder + playlists as .m3u8
+node scripts/acquire.mjs --music "D:\Music" --to-mp3    # convert m4a/flac in that folder to 320 kbps MP3 (needs ffmpeg)
 ```
 
-This tool deliberately doesn't rip songs from YouTube or Spotify: full tracks are copyrighted, and ripping them isn't licensed. Legal ways to own them:
-
-- **iTunes** sells DRM-free 256 kbps files you keep forever.
-- **Bandcamp** sells MP3/FLAC directly from artists.
-- **`--to-mp3`** converts the files you've bought into MP3.
-
-Spotify Premium downloads only play inside the Spotify app.
+It doesn't bulk-rip songs from YouTube or Spotify.

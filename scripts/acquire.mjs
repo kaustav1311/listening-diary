@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// Build your own MP3 library of everything you listen to, the legal way:
-// playlists first, then liked songs, then your most-played songs.
+// Get every song you love onto your own devices: playlists first, then liked
+// songs, then your most-played songs.
 //
 //   node scripts/acquire.mjs
-//       -> acquire/shopping-list.html  every song, where to buy it DRM-free, and the price
+//       -> acquire/shopping-list.html  every song with free links (JioSaavn, YouTube Music,
+//                                      Bandcamp) and the iTunes price if you want a file
 //       -> acquire/shopping-list.csv
 //
 //   node scripts/acquire.mjs --music "D:\Music"
@@ -18,10 +19,9 @@
 //          --no-lookup  don't query iTunes for songs missing from cache/itunes.json
 //          --out <dir>  output folder (default ./acquire)
 //
-// Why no "download every song" button: full tracks are copyrighted, and ripping
-// them from YouTube/Spotify isn't licensed. iTunes sells DRM-free 256 kbps AAC
-// files you own forever, and Bandcamp sells DRM-free MP3/FLAC straight from
-// artists. Spotify Premium downloads only play inside the Spotify app.
+// This script doesn't bulk-rip songs from YouTube or Spotify. It points you to
+// free, official routes instead (in-app offline on JioSaavn / YouTube Music,
+// free Bandcamp downloads) and organises whatever music folder you already have.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -137,15 +137,20 @@ const money = (v, c) => {
   }
 };
 const bandcamp = (t) => `https://bandcamp.com/search?q=${encodeURIComponent(`${t.artist} ${t.name}`)}&item_type=t`;
+const jiosaavn = (t) => `https://www.jiosaavn.com/search/song/${encodeURIComponent(`${queryName(t.name)} ${t.artist}`)}`;
+const ytmusic = (t) => `https://music.youtube.com/search?q=${encodeURIComponent(`${queryName(t.name)} ${t.artist}`)}`;
+function queryName(s) {
+  return s.replace(/\s+-\s+.*$/, '').replace(/[([][^)\]]*[)\]]/g, '').trim() || s;
+}
 const spotify = (uri) => `https://open.spotify.com/track/${uri.split(':')[2]}`;
 const esc = (s = '') => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 // CSV
-const csvRows = [['section', 'song', 'artist', 'album', 'your_hours', 'owned_file', 'itunes_price', 'currency', 'itunes_url', 'bandcamp_search', 'spotify_url']];
+const csvRows = [['section', 'song', 'artist', 'album', 'your_hours', 'owned_file', 'jiosaavn', 'youtube_music', 'bandcamp_search', 'itunes_price', 'currency', 'itunes_url', 'spotify_url']];
 for (const s of sections)
   for (const t of s.items) {
     const r = it(t.uri);
-    csvRows.push([s.name, t.name, t.artist, t.album, hoursOf(t.uri).toFixed(2), owned.get(t.uri) || '', r?.p > 0 ? r.p : '', r?.c || '', r?.u || '', bandcamp(t), spotify(t.uri)]);
+    csvRows.push([s.name, t.name, t.artist, t.album, hoursOf(t.uri).toFixed(2), owned.get(t.uri) || '', jiosaavn(t), ytmusic(t), bandcamp(t), r?.p > 0 ? r.p : '', r?.c || '', r?.u || '', spotify(t.uri)]);
   }
 fs.writeFileSync(path.join(OUT, 'shopping-list.csv'), '\ufeff' + csvRows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n'));
 
@@ -221,8 +226,8 @@ const sectionHtml = sections
 <td class="n">${i + 1}</td>
 <td><strong>${esc(t.name)}</strong><div class="muted">${esc(t.artist)}${dup ? ' · also listed above' : ''}</div></td>
 <td class="num">${hoursOf(t.uri) ? hoursOf(t.uri).toFixed(1) + ' h' : ''}</td>
+<td class="links"><a href="${esc(jiosaavn(t))}" target="_blank" rel="noopener">JioSaavn</a> · <a href="${esc(ytmusic(t))}" target="_blank" rel="noopener">YT Music</a> · <a href="${esc(bandcamp(t))}" target="_blank" rel="noopener">Bandcamp</a></td>
 <td>${buy}</td>
-<td><a href="${esc(bandcamp(t))}" target="_blank" rel="noopener">Bandcamp</a></td>
 <td><a href="${esc(spotify(t.uri))}" target="_blank" rel="noopener">Spotify</a></td>
 <td class="c"><label><input type="checkbox" ${own ? 'checked disabled' : ''} aria-label="I own ${esc(t.name)}"> <span class="muted">${own ? 'in library' : ''}</span></label></td>
 </tr>`;
@@ -230,7 +235,7 @@ const sectionHtml = sections
       .join('');
     return `<section><h2><span class="tag">${si + 1}</span> ${esc(s.name)}</h2>
 <p class="muted">${s.items.length} songs${MUSIC ? ` · ${have} already in your library` : ''}${cost ? ` · ${esc(money(cost, currency))} for the rest on iTunes` : ''}</p>
-<div class="wrap-t"><table><thead><tr><th>#</th><th>Song</th><th class="num">You played</th><th>iTunes (DRM-free)</th><th>Artist store</th><th>Listen</th><th>Owned</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+<div class="wrap-t"><table><thead><tr><th>#</th><th>Song</th><th class="num">You played</th><th>Free (offline in app / free downloads)</th><th>Buy as a file</th><th>Listen</th><th>Owned</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
   })
   .join('\n');
 
@@ -249,7 +254,7 @@ h1{font-size:28px;margin:0 0 6px}h2{font-size:18px;margin:28px 0 2px;display:fle
 .stat b{display:block;font-size:22px}.stat span{font-size:12.5px;color:var(--muted)}
 .wrap-t{overflow-x:auto}table{border-collapse:collapse;width:100%;background:var(--surface);border-radius:12px;font-size:14px}
 th,td{padding:8px 10px;border-bottom:1px solid var(--grid);text-align:left;vertical-align:top}th{font-size:12.5px;color:var(--muted);font-weight:600}
-.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.n{color:var(--muted);width:28px}.c{white-space:nowrap}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.links{white-space:nowrap}.n{color:var(--muted);width:28px}.c{white-space:nowrap}
 tr.own,tr.mine{background:var(--own)}body.hide-owned tr.own,body.hide-owned tr.mine{display:none}
 .bar{position:sticky;top:0;background:var(--page);padding:10px 0;border-bottom:1px solid var(--grid);z-index:2;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
 </style></head><body><main>
@@ -263,7 +268,7 @@ ${MUSIC ? `<div class="stat"><b>${owned.size}</b><span>already in your library</
 <div class="stat"><b>${unavailable}</b><span>not found on iTunes (try Bandcamp)</span></div>
 ${pending ? `<div class="stat"><b>${pending}</b><span>not checked yet (run again without --no-lookup)</span></div>` : ''}
 </div>
-<div class="note"><strong>How to get MP3s you actually own.</strong> Buy a song on iTunes (Apple Music app or iTunes on Windows, then Store → Buy) and you get a DRM-free 256 kbps file that's yours to keep. Bandcamp sells MP3/FLAC directly from artists. Put the files in one folder and run <code>node scripts/acquire.mjs --music "&lt;that folder&gt;" --to-mp3</code>: owned songs get ticked off, your playlists are rebuilt as .m3u8 files, and anything that isn't MP3 yet is converted to 320 kbps MP3.</div>
+<div class="note"><strong>Free first.</strong> JioSaavn and YouTube Music are free with ads and let you save songs for offline listening in the app (JioSaavn Pro and Wynk Premium often come bundled with Jio and Airtel plans). Many artists also offer free or name-your-price downloads on Bandcamp. If you want a file you keep forever, iTunes sells DRM-free 256 kbps tracks for ₹15–18 each.<br><br><strong>Your folder, organised.</strong> Run <code>node scripts/acquire.mjs --music "&lt;your music folder&gt;" --to-mp3</code>: songs you have get ticked off, your Spotify playlists are rebuilt as .m3u8 files over those files, and anything that isn't MP3 is converted to 320 kbps MP3.</div>
 <div class="bar"><label><input type="checkbox" id="hide"> Hide songs I own</label><span class="muted" id="count"></span></div>
 ${sectionHtml}
 </main>
