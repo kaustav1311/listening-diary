@@ -83,8 +83,23 @@ export function playlistLang(name = '') {
   return h && h.strong ? h.lang : null;
 }
 
-// Romanised titles: "Tere Ishq Nachaya", "Ami Tomake", "Kimi no Uta".
+// Artists whose language the script can't reveal (Nepali shares Devanagari with
+// Hindi; most of these titles are romanised anyway).
+const KNOWN_ARTISTS = {
+  Nepali:
+    'bipul chettri|tribal rain|swoopna suman|sajjan raj vaidya|sushant kc|melina rai|rohit john chettri|neetesh jung kunwar|yabesh thapa|uniq poet|wangden sherpa|abhaya & the steam engines|ulto pulto|albatross|1974 ad|narayan gopal|bartika eam rai|kutumba|nepathya|trishna gurung|purna rai|pramod kharel|raju lama|mongolian heart|sabin rai|ani choying drolma|arthur gunn|vten|yama buddha|sacar|laure|girish khatiwada|anju panta|deepak bajracharya|kali prasad baskota|prabisha adhikari|bartika rai|joint family international|shreya sotang|samir shrestha|kamal khatri|aastha raut|sugam pokharel|mohan shrestha',
+  // Kept short and exact on purpose: a name here overrides every other signal.
+};
+const KNOWN = Object.entries(KNOWN_ARTISTS).map(([lang, list]) => [lang, new Set(list.split('|'))]);
+export function knownArtistLang(artist = '') {
+  const a = artist.toLowerCase().trim();
+  for (const [lang, set] of KNOWN) if (set.has(a)) return lang;
+  return null;
+}
+
+// Romanised titles: "Tere Ishq Nachaya", "Ami Tomake", "Kimi no Uta", "Je Chhau Timi".
 const WORDS = {
+  Nepali: 'timi timro timilai timrai mero malai hajur hamro ramro kasto kina sanga chha chhau chhu chhan bhayo hola pirati samjhana laijau laijaw nacha mayalu sanu bhanna garna hijo bholi basanta pahad lahara',
   Punjabi: 'mainu tenu tusi tuhanu kudi kudiye munde jatt jattan gallan gal kithe sohni sohneya jind assi vich pind lagdi nachaya akh akhiyan tutt dass mutiyaar putt yaar yaara yaarian yaariyan sardar chann mahiya ve haye nachdi',
   'Hindi & Urdu':
     'tere mere teri meri tera mera tum tumhe tumse tumhari hum humein hume humko dil dilbar dildaar ishq pyaar pyar mohabbat zindagi kya hai hain nahi nahin jaana jaane jaaneman sajna sajni sanam rabba maahi raat raatein ankhiyan aankhein aankhon kaun aaja saathi khuda maula nazar chand chanda bhool gaye idhar udhar baat mori piya saiyaan saiyan judaai jaan zara phir kabhi sapna sapne duniya barsaat baarish mausam ghar safar raahein khwab khwaab aashiq aashiqui deewana deewani kahani kyun aise jaise tujhe mujhe tujh mujh tu hoga hogi tha thi wohi woh yeh mein dekha dekho chalo chal pyaari pyara kuch jiya jiye tanha mehfil sawan saawan dhadkan intezaar shaam subah rasiya bairi meherbaan qawwali ali maahiya ranjha heer ghazal sufi hasna rona yaadein yaad',
@@ -111,9 +126,14 @@ export function titleWordsLang(title = '') {
     // Japanese particles (no/wa/ga/wo) need a second, distinctive word.
     if (n && (lang !== 'Japanese' || tokens.filter((t) => set.has(t) && t.length > 2).length)) score[lang] = n;
   }
-  if (score.Punjabi && score['Hindi & Urdu']) score.Punjabi += 0.5; // Punjabi markers are the more specific
+  // Punjabi and Nepali markers are more specific than the shared Hindi vocabulary.
+  if (score.Punjabi && score['Hindi & Urdu']) score.Punjabi += 0.5;
+  if (score.Nepali && score['Hindi & Urdu']) score.Nepali += 0.5;
   const best = Object.entries(score).sort((a, b) => b[1] - a[1])[0];
-  if (best) return { lang: best[0], confidence: 'medium' };
+  // Two or more distinctive words ("Je Chhau Timi") is strong enough to beat a playlist label.
+  // Shared Hindi/Urdu vocabulary ("Tere", "Dil") is not distinctive: Punjabi songs use it too.
+  const distinctive = ['Nepali', 'Bengali', 'Punjabi', 'Korean'];
+  if (best) return { lang: best[0], confidence: best[1] >= 2 && distinctive.includes(best[0]) ? 'high' : 'medium' };
   const eng = tokens.filter((t) => ENGLISH.has(t)).length;
   // "When We Feel Young" (3 of 4 common English words) is solid; "Easy" alone is a guess.
   if (eng >= 2 && eng >= tokens.length / 2) return { lang: 'English & global', confidence: 'medium' };

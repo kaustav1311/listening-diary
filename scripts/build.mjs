@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, exportDir, streams, account, tech } from './lib/export.mjs';
-import { FAMILIES, family, LANGS, scriptLang, genreLang, playlistLang, titleWordsLang, SLEEP_RX } from './lib/classify.mjs';
+import { FAMILIES, family, LANGS, scriptLang, genreLang, playlistLang, titleWordsLang, knownArtistLang, SLEEP_RX } from './lib/classify.mjs';
 
 const dir = exportDir();
 const OUT = path.join(ROOT, 'site', 'data');
@@ -111,7 +111,7 @@ tracks.list.forEach((t, i) => {
   const sl = scriptLang(t.name) || scriptLang(artists.list[t.a]);
   if (sl) info.lang[sl] = (info.lang[sl] || 0) + w * 3;
   const tw = titleWordsLang(t.name);
-  if (tw && tw.confidence === 'medium') info.lang[tw.lang] = (info.lang[tw.lang] || 0) + w * 2;
+  if (tw && tw.confidence !== 'low') info.lang[tw.lang] = (info.lang[tw.lang] || 0) + w * (tw.confidence === 'high' ? 4 : 2);
   if (t.it?.g) {
     info.genre[t.it.g] = (info.genre[t.it.g] || 0) + w;
     const gl = genreLang(t.it.g);
@@ -135,7 +135,7 @@ const artistRows = artists.list.map((name, i) => {
   const info = artistInfo[i];
   const ai = itunes.artists[name];
   const g = (ai && !ai.miss && ai.g) || top(info.genre);
-  let lang = top(info.lang) || genreLang(g || '') || scriptLang(name);
+  let lang = knownArtistLang(name) || top(info.lang) || genreLang(g || '') || scriptLang(name);
   if (!lang && g && family(g) !== 'Indian') lang = null; // unknown stays unknown
   const sleep = SLEEP_RX.test(name) || info.sleep / info.total > 0.5 || /new age|ambient|relax|meditation|sleep/i.test(g || '') ? 1 : 0;
   return [name, g ? genres.id(g) : -1, lang ? LANGS.indexOf(lang) : -1, sleep];

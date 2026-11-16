@@ -19,3 +19,8 @@ Thumbs.db
 
 # Agent-readable library export (local; contains your full library)
 library-export/
+
+# Playlists rebuilt from your app logs (your library; keep local)
+cache/discovered-playlists.json
+cache/playlist-names.json
+cache/track-titles.json

@@ -45,6 +45,17 @@ Node 20+ is required. There are no npm dependencies; d3 is loaded from jsDelivr.
 - **Published:** the full play log, as listening time plus track. This includes private-session plays; to leave those out, run `node scripts/build.mjs --exclude-incognito`.
 - **Local only:** `private.json`, which holds ad inferences and search history.
 
+## Export the whole library for another agent
+
+```bash
+node scripts/discover-playlists.mjs   # rebuild followed / Spotify-made playlists from the app logs
+node scripts/export-library.mjs       # library-export/: tracks.jsonl, library.json, CSVs, library.md, schema.json
+```
+
+Spotify's export only lists playlists you created. `discover-playlists.mjs` recovers the ones you follow, plus Spotify-made ones, from the technical logs. It covers only the last few months, and only the songs that appeared there, so each playlist carries a `coverage` figure.
+
+Every song becomes one parsed record. Each has a clean title, version, featured artists and the film it's from, plus language (with its source and confidence), genre, year, playlists, liked status and play stats. See `library-export/README.md` for the fields. The output stays local because it's git-ignored.
+
 ## Get the music: `scripts/acquire.mjs`
 
 Builds a list of every song, in this priority order:
