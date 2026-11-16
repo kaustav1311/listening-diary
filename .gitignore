@@ -1,0 +1,18 @@
+# The raw Spotify export never goes in the repo (it has e-mail, address, IPs, payments)
+Spotify Account Data/
+Spotify Extended Streaming History/
+Spotify Technical Log Information/
+my_spotify_data*.zip
+*.zip
+
+# Local-only outputs
+site/data/private.json
+acquire/
+cache/*.log
+cache/*.tmp
+
+# Tooling
+.claude/
+node_modules/
+.DS_Store
+Thumbs.db

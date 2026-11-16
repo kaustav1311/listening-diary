@@ -1,0 +1,14 @@
+{
+  "name": "listening-diary",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A personal dashboard built from a Spotify privacy export, plus a script to build a DRM-free library of the songs you love.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "enrich": "node scripts/enrich.mjs",
+    "build": "node scripts/build.mjs",
+    "serve": "node scripts/serve.mjs",
+    "acquire": "node scripts/acquire.mjs"
+  }
+}
