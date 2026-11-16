@@ -956,6 +956,39 @@ function renderWrapped() {
   }
 }
 
+const SEGMENTS = [
+  ['Super Listeners', 'Super listener of'],
+  ['Moderate listeners', 'Regular listener of'],
+  ['Light listeners', 'Light listener of'],
+  ['Previously Active Listeners', 'Drifted away from'],
+];
+function renderNotes() {
+  const mq = meta?.marquee || {};
+  const caps = meta?.capsule || [];
+  if (!Object.keys(mq).length && !caps.length) return;
+  $('notes-card').hidden = false;
+  const box = $('marquee');
+  box.replaceChildren();
+  for (const [key, label] of SEGMENTS) {
+    const seg = mq[key];
+    if (!seg) continue;
+    const g = h('div', 'inf-group');
+    g.appendChild(h('h4', null, `${label} (${fmt.int(seg.count)} artist${seg.count === 1 ? '' : 's'})`));
+    const chips = h('div', 'chips');
+    for (const a of seg.sample) chips.appendChild(h('span', 'chip', a));
+    if (seg.count > seg.sample.length) chips.appendChild(h('span', 'chip', `+${fmt.int(seg.count - seg.sample.length)} more`));
+    g.appendChild(chips);
+    box.appendChild(g);
+  }
+  const cap = $('capsule');
+  cap.replaceChildren();
+  for (const c of caps.slice(0, 12)) {
+    const card = h('div', 'story');
+    card.append(h('strong', null, c.text), h('div', 'd', c.date));
+    cap.appendChild(card);
+  }
+}
+
 function renderPrivate() {
   if (!priv) return;
   $('private-card').hidden = false;
@@ -1051,4 +1084,5 @@ renderAll();
 renderLibrary();
 renderTech();
 renderWrapped();
+renderNotes();
 renderPrivate();

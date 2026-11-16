@@ -70,7 +70,7 @@ sections.push({
   kind: 'top',
   name: `Most played (top ${TOP} not above)`,
   items: [...played.values()]
-    .filter((t) => t.name && !listed.has(t.uri))
+    .filter((t) => t.name && t.uri.startsWith('spotify:track:') && !listed.has(t.uri))
     .sort((a, b) => b.ms - a.ms)
     .slice(0, TOP)
     .map((t) => ({ uri: t.uri, name: t.name, artist: t.artist, album: t.album })),

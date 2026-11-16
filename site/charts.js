@@ -275,30 +275,32 @@ export function heatmap(el, { grid, rowLabels, colLabel = (h) => h, valueFormat 
     el.replaceChildren();
     const m = { t: 4, r: 4, b: 24, l: 40 };
     const cols = grid[0].length;
-    const cell = Math.max(10, Math.min(30, (width - m.l - m.r) / cols));
+    // Columns shrink to fit the card; rows keep a readable height for their labels.
+    const cell = Math.max(6, Math.min(30, Math.floor((width - m.l - m.r) / cols)));
+    const rowH = Math.max(cell, 16);
     const iw = cell * cols;
-    const ih = cell * grid.length;
+    const ih = rowH * grid.length;
     const max = d3.max(grid.flat()) || 1;
     const color = d3.scaleQuantize().domain([0, max]).range(ramp);
     const svg = d3.select(el).append('svg').attr('width', iw + m.l + m.r).attr('height', ih + m.t + m.b).attr('role', 'img');
     const g = svg.append('g').attr('transform', `translate(${m.l},${m.t})`);
     grid.forEach((row, r) => {
-      g.append('text').attr('class', 'axis').attr('x', -8).attr('y', r * cell + cell / 2).attr('dy', '0.32em').attr('text-anchor', 'end').text(rowLabels[r]);
+      g.append('text').attr('class', 'axis').attr('x', -8).attr('y', r * rowH + rowH / 2).attr('dy', '0.32em').attr('text-anchor', 'end').text(rowLabels[r]);
       row.forEach((v, c) => {
         g.append('rect')
           .attr('class', 'cell')
           .attr('x', c * cell + 1)
-          .attr('y', r * cell + 1)
+          .attr('y', r * rowH + 1)
           .attr('width', cell - 2)
-          .attr('height', cell - 2)
-          .attr('rx', 3)
+          .attr('height', rowH - 2)
+          .attr('rx', Math.min(3, (cell - 2) / 2))
           .attr('fill', v ? color(v) : 'var(--cell-empty)')
           .attr('tabindex', 0)
           .on('pointerenter pointermove focus', (evt) => tip.show(evt, `${rowLabels[r]} · ${colLabel(c)}`, [{ value: valueFormat(v), label: 'listened' }]))
           .on('pointerleave blur', () => tip.hide());
       });
     });
-    for (let c = 0; c < cols; c += cols > 12 ? 3 : 1)
+    for (let c = 0; c < cols; c += cell < 12 ? 6 : cols > 12 ? 3 : 1)
       g.append('text').attr('class', 'axis').attr('x', c * cell + cell / 2).attr('y', ih + 16).attr('text-anchor', 'middle').text(colLabel(c));
   });
 }

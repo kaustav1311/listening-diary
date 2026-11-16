@@ -28,7 +28,8 @@ const itunes = fs.existsSync(itunesPath) ? JSON.parse(fs.readFileSync(itunesPath
 // ---------------------------------------------------------------- helpers
 const TZ = { IN: 5.5, TH: 7, VN: 7, MY: 8, SG: 8, ID: 7, AE: 4, GB: 0, DZ: 1, FR: 1, DE: 1, NP: 5.75, BD: 6, LK: 5.5, JP: 9, KR: 9, US: -5 };
 const localSeconds = (ts, cc) => Math.round(Date.parse(ts) / 1000 + (TZ[cc] ?? 5.5) * 3600);
-const trackId = (uri) => (uri || '').split(':')[2] || '';
+// Plays from the short account history that couldn't be matched have no Spotify id.
+const trackId = (uri) => ((uri || '').startsWith('spotify:track:') ? uri.split(':')[2] : '');
 
 function indexer() {
   const list = [];
@@ -57,7 +58,8 @@ function platformName(p = '') {
   if (s.includes('sm-m307f')) return 'Samsung Galaxy M30s';
   if (s.includes('web')) return 'Web player';
   if (s.includes('android')) return 'Android phone';
-  return p || 'Unknown';
+  if (!s || s === 'unknown') return 'Unknown device';
+  return p;
 }
 
 
@@ -262,6 +264,41 @@ const marquee = account(dir, 'Marquee') || [];
 const marqueeSeg = {};
 for (const m of marquee) (marqueeSeg[m.segment] ||= []).push(m.artistName);
 
+// Sound Capsule: the weekly/monthly notes Spotify shows in the app, as sentences.
+const capsule = account(dir, 'YourSoundCapsule') || {};
+const pct = (x) => (x < 0.01 ? `${(x * 100).toFixed(1)}%` : `${Math.round(x * 100)}%`);
+const mins = (s) => (s >= 3600 ? `${(s / 3600).toFixed(1)} hours` : `${Math.round(s / 60)} minutes`);
+const capsuleText = (h) => {
+  switch (h.highlightType) {
+    case 'TIME_WELL_SPENT': {
+      const it = h.timeWellSpentHighlight?.items?.[0];
+      return it && `${mins(it.secondsPlayed)} of music from the ${it.entity}s`;
+    }
+    case 'PROPORTION_LISTENING_ENTITY':
+      return `${h.proportionListeningHighlight.entity} was ${Math.round(h.proportionListeningHighlight.listeningPercentage)}% of your listening`;
+    case 'UNLIKE_COMBINATION':
+      return `Unlikely pairing: ${h.unlikeCombinationHighlight.firstEntity} + ${h.unlikeCombinationHighlight.secondEntity}`;
+    case 'STREAKS':
+      return `${h.streaksHighlight.dayStreaks}-day streak of “${h.streaksHighlight.entity}”`;
+    case 'MILESTONE':
+      return `${mins(h.multiEntityMilestoneHighlight.milestoneListeningSeconds)} with ${h.multiEntityMilestoneHighlight.entities.slice(0, 3).join(', ')} and more`;
+    case 'MONTHLY_RECAP':
+      return `${mins(h.monthlyRecapHighlight.totalSecondsPlayed)} this month; top song “${h.monthlyRecapHighlight.topTracks?.[0]}”`;
+    case 'TOP_LISTENER':
+      return `Top ${pct(h.topListenerHighlight.topPercentile)} of ${h.topListenerHighlight.entity} listeners`;
+    case 'ON_THIS_PERIOD':
+      return `${h.onThisPeriodHighlight.nostalgiaUnitsAgo} ${h.onThisPeriodHighlight.nostalgiaPeriod.toLowerCase()}s ago you were playing “${h.onThisPeriodHighlight.entity}”`;
+    case 'ON_REPEAT':
+      return `“${h.onRepeatHighlight.entity}” on repeat: ${h.onRepeatHighlight.streamCount} plays`;
+    default:
+      return null;
+  }
+};
+const capsuleOut = (capsule.highlights || [])
+  .map((h) => ({ date: h.date, type: h.highlightType, text: capsuleText(h) }))
+  .filter((h) => h.text)
+  .sort((a, b) => (a.date < b.date ? 1 : -1));
+
 const wrappedOut = wrapped
   ? {
       minutes: wrapped.party?.totalNumListeningMinutes ?? Math.round((wrapped.yearlyMetrics?.totalMsListened || 0) / 60000),
@@ -307,6 +344,8 @@ const meta = {
     .slice(0, 10),
   wrapped2025: wrappedOut,
   marquee: Object.fromEntries(Object.entries(marqueeSeg).map(([k, v]) => [k, { count: v.length, sample: v.slice(0, 12) }])),
+  capsule: capsuleOut,
+  shortHistoryPlays: rows.filter((r) => r._short).length,
   tech: techLog,
 };
 

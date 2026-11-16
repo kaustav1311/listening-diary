@@ -65,7 +65,52 @@ export function streams(dir) {
     }
   }
   rows.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
-  return rows;
+  return appendShortHistory(dir, rows);
+}
+
+// Account Data's StreamingHistory_music_*.json is coarser (minute precision, no
+// track URI, no device/skip info) but usually runs a few days past the extended
+// history. Append those newer plays, matching them to URIs by artist + title.
+function appendShortHistory(dir, rows) {
+  const p = path.join(dir, FOLDERS.account);
+  if (!fs.existsSync(p)) return rows;
+  const last = rows.length ? rows[rows.length - 1].ts.slice(0, 16) : '';
+  const key = (artist, track) => `${(artist || '').toLowerCase()}\u0000${(track || '').toLowerCase()}`;
+  const uriOf = new Map();
+  for (const r of rows) if (r.spotify_track_uri) uriOf.set(key(r.master_metadata_album_artist_name, r.master_metadata_track_name), r);
+  const lib = readJSON(path.join(p, 'YourLibrary.json')) || {};
+  const known = new Map((lib.tracks || []).map((t) => [key(t.artist, t.track), { uri: t.uri, album: t.album }]));
+  for (const pl of (readJSON(path.join(p, 'Playlist1.json')) || {}).playlists || [])
+    for (const i of pl.items || []) if (i.track?.trackUri) known.set(key(i.track.artistName, i.track.trackName), { uri: i.track.trackUri, album: i.track.albumName });
+  const extra = [];
+  for (const f of fs.readdirSync(p).filter((x) => /^StreamingHistory_music_\d+\.json$/.test(x))) {
+    for (const s of readJSON(path.join(p, f)) || []) {
+      const ts = `${s.endTime.replace(' ', 'T')}:00Z`;
+      if (ts.slice(0, 16) <= last) continue;
+      const k = key(s.artistName, s.trackName);
+      const prev = uriOf.get(k);
+      const kn = known.get(k);
+      extra.push({
+        ts,
+        platform: 'unknown',
+        ms_played: s.msPlayed,
+        conn_country: prev?.conn_country || 'IN',
+        master_metadata_track_name: s.trackName,
+        master_metadata_album_artist_name: s.artistName,
+        master_metadata_album_album_name: prev?.master_metadata_album_album_name || kn?.album || '',
+        spotify_track_uri: prev?.spotify_track_uri || kn?.uri || `unmatched:${k}`,
+        reason_start: 'unknown',
+        reason_end: 'unknown',
+        shuffle: null,
+        skipped: null,
+        offline: null,
+        incognito_mode: false,
+        _short: true,
+      });
+    }
+  }
+  extra.sort((a, b) => (a.ts < b.ts ? -1 : 1));
+  return rows.concat(extra);
 }
 
 // Totals per track URI and per artist, used to prioritise metadata lookups.
