@@ -84,10 +84,11 @@ export function client(country = 'in', log = console.log) {
     if (!scored.length) return { miss: 1 };
     const best = scored[0];
     // Song year = earliest release among equally good matches (skips later compilations).
+    const bestYear = +String(best.r.releaseDate || '').slice(0, 4) || 0;
     const years = scored
       .filter((x) => x.score >= best.score - 0.06)
       .map((x) => +String(x.r.releaseDate || '').slice(0, 4))
-      .filter((y) => y > 1900);
+      .filter((y) => y > 1900 && (!bestYear || bestYear - y <= 40)); // ignore bogus ancient dates
     const r = best.r;
     return {
       id: r.trackId,

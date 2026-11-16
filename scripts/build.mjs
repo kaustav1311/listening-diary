@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, exportDir, streams, account, tech } from './lib/export.mjs';
+import { yearOutliers } from './lib/match.mjs';
 import { FAMILIES, family, LANGS, scriptLang, genreLang, playlistLang, titleWordsLang, knownArtistLang, SLEEP_RX } from './lib/classify.mjs';
 
 const dir = exportDir();
@@ -146,9 +147,10 @@ const artistRows = artists.list.map((name, i) => {
 // ---------------------------------------------------------------- catalog
 const ART_PREFIX = 'https://is1-ssl.mzstatic.com/image/thumb/';
 const shortArt = (u) => (u ? u.replace(/^https:\/\/is\d-ssl\.mzstatic\.com\/image\/thumb\//, '').replace(/\/100x100bb\.jpg$/, '') : 0);
-const trackRows = tracks.list.map((t) => {
+const badYear = yearOutliers(tracks.list.map((t, i) => ({ key: i, artist: t.a, year: t.it?.y || 0, album: t.it?.al })));
+const trackRows = tracks.list.map((t, i) => {
   const g = t.it?.g ? genres.id(t.it.g) : -1;
-  return [t.name, t.a, t.al, t.id, t.it?.y || 0, g, shortArt(t.it?.art), t.it?.x || 0];
+  return [t.name, t.a, t.al, t.id, badYear.has(i) ? 0 : t.it?.y || 0, g, shortArt(t.it?.art), t.it?.x || 0];
 });
 const catalog = {
   artPrefix: ART_PREFIX,

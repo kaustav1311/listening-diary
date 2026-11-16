@@ -6,7 +6,6 @@ const tip = (() => {
   const el = document.createElement('div');
   el.className = 'tooltip';
   el.setAttribute('role', 'status');
-  el.hidden = true;
   document.body.appendChild(el);
   return {
     // rows: [{value, label, color?, strong?}] ; title: string
@@ -34,7 +33,7 @@ const tip = (() => {
         row.append(v, l);
         el.appendChild(row);
       }
-      el.hidden = false;
+      el.classList.add('show');
       this.move(evt);
     },
     move(evt) {
@@ -54,7 +53,7 @@ const tip = (() => {
       el.style.transform = `translate(${left}px, ${top}px)`;
     },
     hide() {
-      el.hidden = true;
+      el.classList.remove('show');
     },
   };
 })();
@@ -74,13 +73,18 @@ export const fmt = {
 
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
+// Draw now (so a filter change swaps marks in the same frame, no flash),
+// then redraw whenever the container's width changes.
 function observe(el, draw) {
   if (el._ro) el._ro.disconnect();
-  let w = 0;
+  let w = el.clientWidth;
+  if (w) draw(w);
   const ro = new ResizeObserver(() => {
     if (el.clientWidth && el.clientWidth !== w) {
       w = el.clientWidth;
+      el.classList.add('resizing'); // no entrance replay on resize
       draw(w);
+      requestAnimationFrame(() => el.classList.remove('resizing'));
     }
   });
   ro.observe(el);
@@ -156,7 +160,7 @@ export function columns(el, { bins, series, height = 260, yFormat = fmt.compact,
     const cols = g.append('g');
     const surface = cssVar('--surface-1');
     bins.forEach((b, i) => {
-      const col = cols.append('g').attr('class', 'col').attr('data-i', i);
+      const col = cols.append('g').attr('class', 'col').attr('data-i', i).style('--i', i);
       let acc = 0;
       const segs = series.map((s) => ({ s, v: b.values[s.key] || 0 })).filter((d) => d.v > 0);
       segs.forEach((d, j) => {
@@ -234,7 +238,15 @@ export function lines(el, { points, series, height = 220, yFormat = (v) => fmt.p
     const line = d3.line().x((d) => x(d.k)).y((d) => y(d.v)).curve(d3.curveMonotoneX);
     for (const s of series) {
       const pts = points.filter((p) => s.values[p.key] != null).map((p) => ({ k: p.key, v: s.values[p.key] }));
-      g.append('path').attr('d', line(pts)).attr('fill', 'none').attr('stroke', s.color).attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
+      g.append('path')
+        .attr('class', 'line')
+        .attr('pathLength', 1) // lets CSS draw the line in with a normalised dash
+        .attr('d', line(pts))
+        .attr('fill', 'none')
+        .attr('stroke', s.color)
+        .attr('stroke-width', 2)
+        .attr('stroke-linejoin', 'round')
+        .attr('stroke-linecap', 'round');
       const last = pts[pts.length - 1];
       if (last) {
         g.append('circle').attr('class', 'dot').attr('cx', x(last.k)).attr('cy', y(last.v)).attr('r', 4).attr('fill', s.color);
@@ -270,7 +282,7 @@ export function lines(el, { points, series, height = 220, yFormat = (v) => fmt.p
 }
 
 /** 7x24 heatmap, sequential single-hue ramp. grid[dow][hour] = value */
-export function heatmap(el, { grid, rowLabels, colLabel = (h) => h, valueFormat = fmt.hours, ramp }) {
+export function heatmap(el, { grid, rowLabels, colLabel = (h) => h, valueFormat = fmt.hours, ramp, mark = null }) {
   observe(el, (width) => {
     el.replaceChildren();
     const m = { t: 4, r: 4, b: 24, l: 40 };
@@ -294,12 +306,23 @@ export function heatmap(el, { grid, rowLabels, colLabel = (h) => h, valueFormat 
           .attr('width', cell - 2)
           .attr('height', rowH - 2)
           .attr('rx', Math.min(3, (cell - 2) / 2))
+          .style('--d', Math.min(420, (c + r * 3) * 9)) // diagonal sweep, capped
           .attr('fill', v ? color(v) : 'var(--cell-empty)')
           .attr('tabindex', 0)
           .on('pointerenter pointermove focus', (evt) => tip.show(evt, `${rowLabels[r]} · ${colLabel(c)}`, [{ value: valueFormat(v), label: 'listened' }]))
           .on('pointerleave blur', () => tip.hide());
       });
     });
+    if (mark) {
+      const [r, c] = mark;
+      g.append('rect')
+        .attr('class', 'now-cell')
+        .attr('x', c * cell)
+        .attr('y', r * rowH)
+        .attr('width', cell)
+        .attr('height', rowH)
+        .attr('rx', Math.min(4, cell / 2));
+    }
     for (let c = 0; c < cols; c += cell < 12 ? 6 : cols > 12 ? 3 : 1)
       g.append('text').attr('class', 'axis').attr('x', c * cell + cell / 2).attr('y', ih + 16).attr('text-anchor', 'middle').text(colLabel(c));
   });

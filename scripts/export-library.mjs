@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, exportDir, streams, account } from './lib/export.mjs';
 import { loadCache } from './lib/itunes.mjs';
+import { yearOutliers } from './lib/match.mjs';
 import { scriptOf, scriptLang, genreLang, playlistHint, titleWordsLang, knownArtistLang, family } from './lib/classify.mjs';
 
 const argv = process.argv;
@@ -150,6 +151,13 @@ const likedRank = new Map((library.tracks || []).map((t, i) => [t.uri, i + 1]));
 const banned = new Set((library.bannedTracks || []).map((t) => t.uri));
 
 // ------------------------------------------------------------ records
+// Same outlier-year guard as the dashboard, over every song we know a year for.
+const badYears = yearOutliers(
+  [...new Set([...stats.keys(), ...base.keys()])].map((uri) => {
+    const it = itunes.tracks[uri];
+    return { key: uri, artist: base.get(uri)?.artist || stats.get(uri)?.artist, year: it && !it.miss ? it.y || 0 : 0, album: it?.al };
+  })
+);
 let priority = 0;
 // Your playlists, then liked songs, then followed playlists, then Spotify-made ones.
 const order = [
@@ -228,7 +236,7 @@ for (const [uri, firstSource] of order) {
     genre,
     genre_family: family(genre),
     genre_source: match?.g ? 'itunes_track' : a.genre ? 'artist_profile' : null,
-    release_year: match?.y || null,
+    release_year: (match?.y && !badYears.has(uri) ? match.y : null),
     duration_ms: match?.d || null,
     explicit: match ? !!match.x : null,
     sleep_or_ambient: !!a.sleep,

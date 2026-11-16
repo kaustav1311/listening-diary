@@ -165,8 +165,60 @@ function aggregate(sel) {
   return { tMs, tPlays, tSkips, tFirst, tLastSel };
 }
 
+// ------------------------------------------------------------------ motion helpers
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const EASE_OUT_QUART = 'cubic-bezier(0.25, 1, 0.5, 1)';
+
+// Numbers count to their new value from wherever they were (ease-out-expo).
+function countTo(el, to, format, { from, duration = 700 } = {}) {
+  const start = from ?? el._value ?? 0;
+  el._value = to;
+  cancelAnimationFrame(el._raf);
+  clearTimeout(el._safety);
+  if (reducedMotion.matches || document.hidden || start === to) {
+    el.textContent = format(to);
+    return;
+  }
+  el.classList.add('counting');
+  const t0 = performance.now();
+  const done = () => {
+    el.textContent = format(to);
+    el.classList.remove('counting');
+  };
+  const step = (now) => {
+    const p = Math.min(1, (now - t0) / duration);
+    if (p >= 1) return done();
+    el.textContent = format(start + (to - start) * (1 - Math.pow(2, -10 * p)));
+    el._raf = requestAnimationFrame(step);
+  };
+  el.textContent = format(start);
+  el._raf = requestAnimationFrame(step);
+  el._safety = setTimeout(done, duration + 150); // never leave a stale number if frames stall
+}
+
+// Entrances play when a block scrolls into view, then again on every period change.
+// Content is visible without this; .anim only adds the entrance.
+const REVEAL_IDS = ['tiles', 'mosaic', 'time-chart', 'top-artists', 'top-tracks', 'top-albums', 'genre-family', 'genre-list', 'lang-seg', 'lang-year', 'age-chart', 'clock', 'habits', 'eras', 'binges', 'forgotten', 'ends', 'devices', 'playlists', 'tech-tiles', 'volume', 'wr-tiles', 'wr-stories', 'capsule'];
+const revealer =
+  'IntersectionObserver' in window && !reducedMotion.matches
+    ? new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (!e.isIntersecting) continue;
+            e.target.classList.add('anim');
+            revealer.unobserve(e.target);
+          }
+        },
+        { rootMargin: '0px 0px -10% 0px' }
+      )
+    : null;
+
 function seg(container, options, current, onPick, label) {
-  container.replaceChildren();
+  const prev = container._box;
+  const thumb = container._thumb || h('span', 'seg-thumb');
+  container.replaceChildren(thumb);
+  container._thumb = thumb;
+  let active = null;
   for (const [value, text] of options) {
     const b = h('button', null, text);
     b.type = 'button';
@@ -174,18 +226,41 @@ function seg(container, options, current, onPick, label) {
     b.setAttribute('aria-checked', String(value === current));
     b.addEventListener('click', () => onPick(value));
     container.appendChild(b);
+    if (value === current) active = b;
   }
   if (label) container.setAttribute('aria-label', label);
+  if (!active) return;
+  container.classList.add('has-thumb');
+  // FLIP: jump to the new spot, then animate from the old box (transform only).
+  const x = active.offsetLeft;
+  const w = active.offsetWidth;
+  thumb.style.width = `${w}px`;
+  thumb.style.transform = `translateX(${x}px)`;
+  if (prev && (prev.x !== x || prev.w !== w) && !reducedMotion.matches && thumb.animate)
+    thumb.animate([{ transform: `translateX(${prev.x}px) scaleX(${prev.w / w})` }, { transform: `translateX(${x}px)` }], { duration: 260, easing: EASE_OUT_QUART });
+  container._box = { x, w };
+  if (container.scrollWidth > container.clientWidth)
+    container.scrollTo({ left: x - container.clientWidth / 2 + w / 2, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
 }
 
+// Tiles remember their last number so a period change counts from old to new.
+const tileMemory = new Map();
 function tile(label, value, note) {
   const t = h('div', 'tile');
-  t.append(h('div', 't-label', label), h('div', 't-value', value));
+  const v = h('div', 't-value');
+  t.append(h('div', 't-label', label), v);
+  if (value && typeof value === 'object') {
+    countTo(v, value.n, value.fmt, { from: tileMemory.get(label) ?? 0 });
+    tileMemory.set(label, value.n);
+  } else v.textContent = value;
   if (note) t.appendChild(h('div', 't-note', note));
   return t;
 }
+const stagger = (els) => els.forEach((el, i) => el && el.style.setProperty('--i', i));
 
+const PLAY_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z" fill="currentColor"/></svg>';
 function thumb(k, letter) {
+  const box = h('span', 'art');
   const src = k >= 0 ? art(k, 100) : null;
   if (src) {
     const img = h('img');
@@ -194,24 +269,73 @@ function thumb(k, letter) {
     img.loading = 'lazy';
     img.decoding = 'async';
     img.referrerPolicy = 'no-referrer';
-    return img;
-  }
-  return h('span', 'noart', (letter || '♪').slice(0, 1).toUpperCase());
+    box.appendChild(img);
+  } else box.appendChild(h('span', 'noart', (letter || '♪').slice(0, 1).toUpperCase()));
+  const overlay = h('span', 'art-play');
+  overlay.innerHTML = PLAY_ICON; // static markup, no data
+  box.appendChild(overlay);
+  return box;
 }
+const eqMark = () => {
+  const eq = h('span', 'eq');
+  eq.setAttribute('aria-hidden', 'true');
+  for (let i = 0; i < 4; i++) eq.appendChild(h('i'));
+  return eq;
+};
 
-// Player: the official Spotify embed, so playback stays on Spotify.
+// Player: Spotify's own embed. With their iFrame API we also hear when music
+// plays or pauses, so the page can show what's playing.
+const player = { controller: null, k: -1, paused: true };
+function markNowPlaying() {
+  const open = $('player').classList.contains('open');
+  document.querySelectorAll('li.now').forEach((li) => li.classList.remove('now'));
+  if (open && player.k >= 0) document.querySelectorAll(`li[data-k="${player.k}"]`).forEach((li) => li.classList.add('now'));
+  document.documentElement.classList.toggle('is-playing', open && player.k >= 0 && !player.paused);
+}
+function embedController(uri) {
+  const host = h('div');
+  $('player-embed').replaceChildren(host);
+  window.__spotifyApi.createController(host, { uri, width: '100%', height: 80 }, (c) => {
+    player.controller = c;
+    c.addListener('playback_update', (e) => {
+      player.paused = !!e.data?.isPaused;
+      markNowPlaying();
+    });
+    c.addListener('ready', () => c.play());
+  });
+}
 function play(k) {
   const id = C.tracks[k]?.[3];
   if (!id) return;
-  $('player-frame').src = `https://open.spotify.com/embed/track/${id}?utm_source=generator`;
-  $('player').hidden = false;
+  const uri = `spotify:track:${id}`;
+  player.k = k;
+  player.paused = true;
+  if (player.controller) {
+    player.controller.loadUri(uri);
+    player.controller.play();
+  } else if (window.__spotifyApi) embedController(uri);
+  else {
+    const f = h('iframe');
+    f.title = 'Spotify player';
+    f.allow = 'autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture';
+    f.src = `https://open.spotify.com/embed/track/${id}?utm_source=generator`;
+    $('player-embed').replaceChildren(f);
+  }
+  $('player').classList.add('open');
+  $('player').setAttribute('aria-hidden', 'false');
+  markNowPlaying();
 }
 $('player-close').addEventListener('click', () => {
-  $('player').hidden = true;
-  $('player-frame').src = 'about:blank';
+  player.controller?.pause();
+  if (!player.controller) $('player-embed').replaceChildren();
+  $('player').classList.remove('open');
+  $('player').setAttribute('aria-hidden', 'true');
+  player.k = -1;
+  markNowPlaying();
 });
 function playable(li, k) {
   li.classList.add('playable');
+  li.dataset.k = k;
   li.tabIndex = 0;
   li.title = 'Play on Spotify';
   li.addEventListener('click', () => play(k));
@@ -223,24 +347,44 @@ function playable(li, k) {
   });
 }
 
+// Ambient glow: the period's #1 cover, blurred, crossfading on change.
+function setGlow(src) {
+  const box = $('hero-glow');
+  if (!src || box._src === src) return;
+  box._src = src;
+  const layer = h('span');
+  layer.style.backgroundImage = `url("${src.replace(/["\\\s]/g, '')}")`;
+  box.appendChild(layer);
+  requestAnimationFrame(() => requestAnimationFrame(() => layer.classList.add('on')));
+  for (const old of [...box.children].slice(0, -1)) {
+    old.classList.remove('on');
+    setTimeout(() => old.remove(), 1000);
+  }
+}
+
 function topRow(rank, imgEl, name, by, value, sub, frac) {
   const li = h('li');
+  li.style.setProperty('--i', rank - 1);
   const what = h('div', 'what');
   what.append(h('div', 'name', name), h('div', 'by', by));
   const bar = h('div', 'inbar');
   bar.style.width = `${Math.max(2, frac * 100)}%`;
+  bar.style.setProperty('--i', rank - 1);
   what.appendChild(bar);
   const val = h('div', 'val', value);
   if (sub) val.appendChild(h('small', null, sub));
-  li.append(h('span', 'rank', String(rank)), imgEl, what, val);
+  const r = h('span', 'rank');
+  r.append(h('span', 'num', String(rank)), eqMark());
+  li.append(r, imgEl, what, val);
   return li;
 }
 
 function barList(ol, rows, valueFormat = fmt.hours) {
   ol.replaceChildren();
   const max = d3.max(rows, (r) => r.value) || 1;
-  for (const r of rows) {
+  for (const [n, r] of rows.entries()) {
     const li = h('li');
+    li.style.setProperty('--i', n);
     const lab = h('span', 'bl-label', r.label);
     lab.title = r.label;
     const track = h('div', 'bl-track');
@@ -295,20 +439,23 @@ function renderHero(sel, A) {
     streak = Math.max(streak, run);
   }
 
-  $('hero-hours').textContent = `${fmt.int(hrs(sec))} hours`;
+  countTo($('hero-hours'), hrs(sec), (v) => `${fmt.int(v)} hours`, { duration: 900 });
   const period = state.year === 'all' ? `since ${fmtMonth(firstT)}` : `in ${state.year}`;
   $('hero-sub').textContent = `That’s ${(hrs(sec) / 24).toFixed(1)} days of non-stop music ${period}, about ${fmt.hours(hrs(sec) / Math.max(1, days.size))} on a day you pressed play.`;
-  $('tiles').replaceChildren(
-    tile('Streams', fmt.compact(streams), '30 seconds or more'),
-    tile('Songs', fmt.int(songs)),
-    tile('Artists', fmt.int(artistsSeen.size)),
-    state.year === 'all' ? tile('Albums', fmt.int(new Set(sel.map((i) => C.tracks[K[i]][2])).size)) : tile('New artists', fmt.int(fresh), 'first heard this year'),
-    tile('Days listening', fmt.int(days.size)),
-    tile('Longest streak', `${streak} days`),
-    tile('Skipped', fmt.pct(skips / Math.max(1, sel.length)), 'of plays, with next')
-  );
+  const n = (value, f = fmt.int) => ({ n: value, fmt: f });
+  const tiles = [
+    tile('Streams', n(streams, fmt.compact), '30 seconds or more'),
+    tile('Songs', n(songs)),
+    tile('Artists', n(artistsSeen.size)),
+    state.year === 'all' ? tile('Albums', n(new Set(sel.map((i) => C.tracks[K[i]][2])).size)) : tile('New artists', n(fresh), 'first heard this year'),
+    tile('Days listening', n(days.size)),
+    tile('Longest streak', n(streak, (v) => `${Math.round(v)} days`)),
+    tile('Skipped', n(skips / Math.max(1, sel.length), (v) => fmt.pct(v)), 'of plays, with next'),
+  ];
+  stagger(tiles);
+  $('tiles').replaceChildren(...tiles);
 
-  // Mosaic of the period's most-played covers.
+  // Mosaic of the period's most-played covers; each one plays its top song.
   const order = [...A.tMs.keys()].filter((k) => A.tMs[k] > 0 && C.tracks[k][6]).sort((a, b) => A.tMs[b] - A.tMs[a]);
   const seen = new Set();
   const mosaic = $('mosaic');
@@ -317,15 +464,24 @@ function renderHero(sel, A) {
     const al = C.tracks[k][2];
     if (seen.has(al)) continue;
     seen.add(al);
+    const b = h('button', 'mosaic-item');
+    b.type = 'button';
+    b.style.setProperty('--i', seen.size - 1);
+    const label = `Play ${C.tracks[k][0]} by ${C.artists[C.tracks[k][1]][0]}`;
+    b.setAttribute('aria-label', label);
+    b.title = label;
     const img = h('img');
     img.src = art(k, 300);
     img.alt = '';
     img.loading = 'lazy';
     img.referrerPolicy = 'no-referrer';
-    mosaic.appendChild(img);
+    b.appendChild(img);
+    b.addEventListener('click', () => play(k));
+    mosaic.appendChild(b);
     if (seen.size === 12) break;
   }
   mosaic.hidden = seen.size < 4;
+  setGlow(order.length ? art(order[0], 300) : null);
 }
 
 function renderTimeline(sel) {
@@ -349,7 +505,7 @@ function renderTimeline(sel) {
     }
     $('time-sub').textContent = 'Hours per month. Click a column to zoom into that year.';
   } else {
-    const start = Date.UTC(state.year, 0, 1) / 86400;
+    const start = Date.UTC(state.year, 0, 1) / 86400000; // ms -> days since epoch, same unit as DAY
     bins = d3.range(0, 53).map((w) => {
       const d = new Date((start + w * 7) * 86400000);
       return { key: w, label: d.getUTCDate() <= 7 ? MONTHS[d.getUTCMonth()] : '', title: `Week of ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`, values: {} };
@@ -568,8 +724,27 @@ function renderClock(sel) {
   const night = d3.sum(byHour.slice(0, 6));
   const total = d3.sum(byHour) || 1;
   $('clock-sub').textContent = `Busiest slot: ${['Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays'][best[0]]} around ${hourLabel(best[1])}m. ${fmt.pct(night / total)} of your listening happens between midnight and 6 am.`;
+
+  // "You are here": where right now falls in your week, and how busy that hour usually is.
+  const now = new Date();
+  const nowRow = (now.getDay() + 6) % 7;
+  const nowHour = now.getHours();
+  const rank = 1 + byHour.filter((v) => v > byHour[nowHour]).length;
+  const clock = now.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }).toLowerCase();
+  const ordinal = (n) => `${n}${['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] || 'th'}`;
+  const logged = fmt.hours(byHour[nowHour]);
+  const nowText =
+    rank === 1
+      ? `It’s ${clock} now: your busiest hour of the day (${logged} so far).`
+      : rank <= 6
+        ? `It’s ${clock} now: your ${ordinal(rank)}-busiest hour, ${logged} logged.`
+        : rank >= 19
+          ? `It’s ${clock} now: one of your quietest hours, just ${logged}.`
+          : `It’s ${clock} now: ${logged} logged at this hour (outlined).`;
+  $('clock-sub').append(' ', h('span', 'now-line', nowText));
+
   const ramp = [1, 2, 3, 4, 5, 6, 7].map((i) => css(`--seq-${i}`));
-  heatmap($('clock'), { grid, rowLabels: days, colLabel: hourLabel, ramp });
+  heatmap($('clock'), { grid, rowLabels: days, colLabel: hourLabel, ramp, mark: [nowRow, nowHour] });
   const lg = $('clock-legend');
   lg.replaceChildren(h('span', null, 'Less'));
   for (const c of ramp) {
@@ -622,6 +797,7 @@ function renderEras() {
     for (let a = 0; a < C.artists.length; a++) if (aMs[a] && artistFirst[a] >= y0 && artistFirst[a] < y1) fresh++;
     const b = h('button', 'era');
     b.type = 'button';
+    b.style.setProperty('--i', YEARS.indexOf(y));
     b.setAttribute('aria-pressed', String(state.year === y));
     const yr = h('div', 'yr', String(y));
     yr.appendChild(h('small', null, fmt.hours(hrs(sec))));
@@ -777,6 +953,7 @@ function renderLibrary() {
       thin.appendChild(span);
     }
     card.appendChild(thin);
+    card.style.setProperty('--i', box.children.length);
     box.appendChild(card);
   }
   $('pl-legend').replaceChildren(legendEl(series));
@@ -890,8 +1067,7 @@ function renderTech() {
   const outTotal = d3.sum(Object.values(out)) || 1;
   const lowMem = (t.exits || []).find(([r]) => r === 'REASON_LOW_MEMORY');
   const skipsRemote = (t.remote || []).find(([a]) => a === 'skip_to_next');
-  $('tech-tiles').replaceChildren(
-    ...[
+  const techTiles = [
       t.device && tile('Phone', `${t.device.maker}`, `${t.device.os} · ${t.device.ramGB} GB RAM`),
       t.offline && tile('Downloaded', `${fmt.int(t.offline.downloaded)} songs`, `from ${t.offline.links} playlists/albums`),
       tile('Phone speaker', fmt.pct((out.BUILT_IN_SPEAKER || 0) / outTotal), `vs ${fmt.pct((out.LINE_OUT || 0) / outTotal)} wired/line-out`),
@@ -901,8 +1077,9 @@ function renderTech() {
       skipsRemote && tile('Skips from notification', fmt.int(skipsRemote[1]), 'lock screen & earbuds'),
       tile('Liked / unliked', `${t.liked} / ${t.unliked}`),
       t.audio && tile('Normalisation', t.audio.normalization ? 'On' : 'Off', `crossfade ${t.audio.crossfade ? 'on' : 'off'}, gapless ${t.audio.gapless ? 'on' : 'off'}`),
-    ].filter(Boolean)
-  );
+  ].filter(Boolean);
+  stagger(techTiles);
+  $('tech-tiles').replaceChildren(...techTiles);
   const vols = (t.volume || []).map(([v, n]) => ({ key: +v, label: `${Math.round(v * 100)}%`, title: `Volume ${Math.round(v * 100)}%`, values: { 0: n } }));
   columns($('volume'), { bins: vols, series: [{ key: 0, label: 'Volume changes', color: css('--s1') }], height: 180, yFormat: fmt.compact, valueFormat: (v) => `${fmt.int(v)} times`, tickEvery: 2 });
   const dl = $('daylists');
@@ -936,7 +1113,7 @@ function renderWrapped() {
   let sec = 0;
   for (let i = 0; i < N; i++) if (YEAR[i] === 2025) sec += S[i];
   const clubName = (w.club || '').toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-  $('wr-tiles').replaceChildren(
+  const wrTiles = [
     tile('Minutes (Wrapped)', fmt.int(w.minutes), `your data says ${fmt.int(sec / 60)} for all of 2025${meta.incognitoExcluded ? ', private sessions excluded' : ''}`),
     tile('Top fan', `Top ${w.topFanPercent}%`, 'of listeners of your #1 artist'),
     tile('Listening age', String(w.listeningAge)),
@@ -944,12 +1121,15 @@ function renderWrapped() {
     tile('Artists', fmt.int(w.uniqueArtists), `${fmt.int(w.discovered)} discovered`),
     tile('Genres', fmt.int(w.genres)),
     tile('Longest streak', `${w.streak} days`),
-    tile('Mood split', `${Math.round(w.partyPct)}% party`, `${Math.round(w.lovePct)}% love · ${Math.round(w.chillPct)}% chill`)
-  );
+    tile('Mood split', `${Math.round(w.partyPct)}% party`, `${Math.round(w.lovePct)}% love · ${Math.round(w.chillPct)}% chill`),
+  ];
+  stagger(wrTiles);
+  $('wr-tiles').replaceChildren(...wrTiles);
   const st = $('wr-stories');
   st.replaceChildren();
   for (const s of w.stories || []) {
     const c = h('div', 'story');
+    c.style.setProperty('--i', st.children.length);
     const d = `${s.date.slice(6, 8)}/${s.date.slice(4, 6)}/${s.date.slice(0, 4)}`;
     c.append(h('strong', null, s.title), h('span', null, s.text), h('div', 'd', d));
     st.appendChild(c);
@@ -984,6 +1164,7 @@ function renderNotes() {
   cap.replaceChildren();
   for (const c of caps.slice(0, 12)) {
     const card = h('div', 'story');
+    card.style.setProperty('--i', cap.children.length);
     card.append(h('strong', null, c.text), h('div', 'd', c.date));
     cap.appendChild(card);
   }
@@ -1036,6 +1217,7 @@ function renderAll() {
   renderEnds(sel);
   renderDevices(sel);
   renderExplorer(sel, A);
+  markNowPlaying(); // re-rendered rows keep showing what's playing
 }
 function setYear(y) {
   state.year = y;
@@ -1070,15 +1252,36 @@ function rerenderStatic() {
   renderLibrary();
   renderTech();
 }
-$('theme').addEventListener('click', () => {
-  const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-  document.documentElement.dataset.theme = dark ? 'light' : 'dark';
-  store.set('theme', document.documentElement.dataset.theme);
-  // Force charts to redraw with the new theme's steps.
-  document.querySelectorAll('.chart').forEach((c) => c._ro && c._ro.disconnect() && (c._ro = null));
-  rerenderStatic();
+// Theme switch: the new theme spreads out from the toggle (View Transitions),
+// charts redraw with that theme's own colour steps, and nothing re-animates.
+$('theme').addEventListener('click', (e) => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  const r = e.currentTarget.getBoundingClientRect();
+  root.style.setProperty('--vt-x', `${r.left + r.width / 2}px`);
+  root.style.setProperty('--vt-y', `${r.top + r.height / 2}px`);
+  const apply = () => {
+    root.classList.add('no-anim');
+    root.dataset.theme = dark ? 'light' : 'dark';
+    store.set('theme', root.dataset.theme);
+    rerenderStatic();
+  };
+  const settle = () => requestAnimationFrame(() => root.classList.remove('no-anim'));
+  if (document.startViewTransition && !reducedMotion.matches) document.startViewTransition(apply).finished.finally(settle);
+  else {
+    apply();
+    settle();
+  }
 });
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', rerenderStatic);
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  document.documentElement.classList.add('no-anim');
+  rerenderStatic();
+  requestAnimationFrame(() => document.documentElement.classList.remove('no-anim'));
+});
+
+// The filter bar gets an edge once it is actually stuck to the top.
+if ('IntersectionObserver' in window)
+  new IntersectionObserver(([e]) => document.querySelector('.filters').classList.toggle('stuck', !e.isIntersecting)).observe(document.querySelector('.masthead'));
 
 renderAll();
 renderLibrary();
@@ -1086,3 +1289,4 @@ renderTech();
 renderWrapped();
 renderNotes();
 renderPrivate();
+if (revealer) for (const id of REVEAL_IDS) $(id) && revealer.observe($(id));
